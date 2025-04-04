@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cobrinha Multiplayer - Tiros Coloridos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* Estilos personalizados */
+        body {
+            font-family: 'Press Start 2P', cursive; /* Usa a fonte de arcade */
+            overflow: hidden; /* Evita barras de rolagem */
+            background-color: #1a1a1a; /* Fundo escuro */
+            color: #fff; /* Texto branco */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        canvas {
+            border: 4px solid #4a4a4a; /* Borda cinza escura */
+            background-color: #000; /* Fundo preto para o canvas */
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.2); /* Sombra suave */
+            border-radius: 0.5rem; /* Bordas arredondadas */
+        }
+        .score-board {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            max-width: 600px; /* Largura máxima do placar */
+            margin-bottom: 1rem;
+            font-size: 1rem; /* Tamanho da fonte do placar */
+        }
+        .player-score {
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            background-color: #333; /* Fundo cinza escuro para scores */
+        }
+        .player1 { color: #34D399; } /* Verde para Jogador 1 */
+        .player2 { color: #60A5FA; } /* Azul para Jogador 2 */
+        .message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8); /* Fundo semi-transparente */
+            color: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            font-size: 1.5rem; /* Tamanho da fonte da mensagem */
+            z-index: 10;
+            display: none; /* Escondido por padrão */
+            border: 2px solid #fff;
+        }
+        .message-box button {
+            font-family: 'Press Start 2P', cursive;
+            margin-top: 1rem;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            cursor: pointer;
+            background-color: #4CAF50; /* Verde */
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            transition: background-color 0.3s ease;
+            box-shadow: 0 4px #388E3C; /* Sombra 3D */
+        }
+        .message-box button:hover {
+            background-color: #45a049;
+        }
+        .message-box button:active {
+            background-color: #388E3C;
+            box-shadow: 0 2px #388E3C;
+            transform: translateY(2px);
+        }
+        .controls-info {
+            margin-top: 1rem;
+            font-size: 0.75rem;
+            color: #aaa;
+            text-align: center;
+        }
+        .power-up {
+             filter: drop-shadow(0 0 5px currentColor); /* Efeito de brilho */
+        }
+        .projectile {
+            filter: drop-shadow(0 0 5px currentColor); /* Efeito de brilho */
+        }
+
+    </style>
+</head>
+<body class="bg-gray-900 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div id="scoreBoard" class="score-board">
+        <div class="player-score player1">Jogador 1: <span id="score1">0</span></div>
+        <div class="player-score player2">Jogador 2: <span id="score2">0</span></div>
+    </div>
+
+    <canvas id="gameCanvas" width="600" height="400" class="rounded-lg shadow-lg"></canvas>
+
+    <div class="controls-info">
+        Jogador 1: WASD (Mover), F (Atirar) | Jogador 2: Setas (Mover), Enter (Atirar)
+    </div>
+
+    <div id="messageBox" class="message-box">
+        <p id="messageText"></p>
+        <button id="restartButton">Reiniciar</button>
+    </div>
+
+    <script>
+        // --- Configurações do Jogo ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const score1Element = document.getElementById('score1');
+        const score2Element = document.getElementById('score2');
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const restartButton = document.getElementById('restartButton');
+
+        const grid = 20; // Tamanho de cada célula do grid
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+        const tileCountX = canvasWidth / grid;
+        const tileCountY = canvasHeight / grid;
+
+        const initialSpeed = 150; // Millissegundos por atualização (menor = mais rápido)
+        let gameSpeed = initialSpeed;
+        let gameInterval;
+        let powerUpSpawnInterval; // Intervalo para spawn de power-ups
+        let gameActive = false;
+
+        // --- Cores ---
+        const P1_COLOR = '#34D399'; // Verde
+        const P1_HEAD_COLOR = '#10B981';
+        const P2_COLOR = '#60A5FA'; // Azul
+        const P2_HEAD_COLOR = '#3B82F6';
+        const FOOD_COLOR = '#F87171'; // Vermelho claro
+        const POWERUP_SPEED_COLOR = '#FBBF24'; // Amarelo/Laranja
+        const P1_PROJECTILE_COLOR = '#EC4899'; // Rosa (Jogador 1)
+        const P2_PROJECTILE_COLOR = '#F97316'; // Laranja (Jogador 2)
+
+        // --- Estado do Jogo ---
+        let player1, player2;
+        let food;
+        let powerUp = null; // Apenas power-up de 'velocidade' agora
+        let projectiles = []; // Array para guardar os projéteis
+
+        // --- Classes e Funções ---
+
+        // Classe base para elementos do jogo
+        class GameObject {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color; // Cor específica do objeto
+            }
+
+            draw() {
+                ctx.fillStyle = this.color; // Usa a cor do objeto
+                ctx.fillRect(this.x * grid, this.y * grid, grid - 1, grid - 1); // -1 para pequena margem
+            }
+
+            // Verifica colisão com outro GameObject
+            collidesWith(other) {
+                return this.x === other.x && this.y === other.y;
+            }
+        }
+
+        // Classe Comida
+        class Food extends GameObject {
+            constructor(x, y) {
+                super(x, y, FOOD_COLOR);
+            }
+             draw() { // Desenha comida como um círculo
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x * grid + grid / 2, this.y * grid + grid / 2, grid / 2 - 1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Classe Power-up (apenas velocidade agora)
+        class PowerUp extends GameObject {
+            constructor(x, y) {
+                // Apenas power-ups de velocidade existem agora
+                super(x, y, POWERUP_SPEED_COLOR);
+                this.type = 'speed';
+            }
+             draw() { // Desenha power-up como uma estrela
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.save(); // Salva estado do contexto
+                ctx.translate(this.x * grid + grid / 2, this.y * grid + grid / 2); // Move para centro da célula
+                ctx.rotate(Date.now() / 500); // Rotaciona levemente com o tempo
+                const outerRadius = grid / 2 - 1;
+                const innerRadius = grid / 4;
+                for (let i = 0; i < 5; i++) {
+                    ctx.lineTo(Math.cos((18 + i * 72) * Math.PI / 180) * outerRadius, -Math.sin((18 + i * 72) * Math.PI / 180) * outerRadius);
+                    ctx.lineTo(Math.cos((54 + i * 72) * Math.PI / 180) * innerRadius, -Math.sin((54 + i * 72) * Math.PI / 180) * innerRadius);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore(); // Restaura estado do contexto
+                ctx.filter = `drop-shadow(0 0 5px ${this.color})`; // Efeito de brilho
+            }
+        }
+
+        // Classe Projétil
+        class Projectile extends GameObject {
+             // *** MODIFICADO: Aceita cor no construtor ***
+            constructor(x, y, dx, dy, owner, color) {
+                super(x, y, color); // Passa a cor para a classe base
+                this.dx = dx;
+                this.dy = dy;
+                this.owner = owner; // Referência para a cobra que atirou
+                this.lifespan = tileCountX + tileCountY; // Tempo de vida máximo em "passos"
+            }
+
+            move() {
+                this.x += this.dx;
+                this.y += this.dy;
+                this.lifespan--;
+            }
+
+             draw() { // Desenha projétil como um losango
+                ctx.fillStyle = this.color; // *** Usa a cor específica do projétil ***
+                ctx.beginPath();
+                 ctx.save();
+                 ctx.translate(this.x * grid + grid / 2, this.y * grid + grid / 2);
+                 ctx.rotate(Math.atan2(this.dy, this.dx)); // Rotaciona na direção do movimento
+                ctx.moveTo(0, -grid / 3);
+                ctx.lineTo(grid / 2.5, 0);
+                ctx.lineTo(0, grid / 3);
+                ctx.lineTo(-grid / 2.5, 0);
+                ctx.closePath();
+                 ctx.fill();
+                 ctx.restore();
+                 ctx.filter = `drop-shadow(0 0 5px ${this.color})`; // Usa a cor no brilho
+            }
+
+            isOffScreen() {
+                return this.x < 0 || this.x >= tileCountX || this.y < 0 || this.y >= tileCountY || this.lifespan <= 0;
+            }
+
+            // Verifica colisão com o corpo de uma cobra
+            checkCollisionWithSnake(snake) {
+                 // Não colide com o dono ou se a cobra for muito pequena
+                 if (snake === this.owner || snake.body.length <= 1) return false;
+                 for (let i = 0; i < snake.body.length; i++) {
+                    if (this.x === snake.body[i].x && this.y === snake.body[i].y) {
+                        return true; // Colidiu
+                    }
+                }
+                return false;
+            }
+        }
+
+
+        // Classe Cobra
+        class Snake {
+            constructor(x, y, dx, dy, color, headColor, attackKey, projectileColor) { // *** Adicionado projectileColor ***
+                this.body = [{ x, y }];
+                this.dx = dx; // Direção X inicial
+                this.dy = dy; // Direção Y inicial
+                this.color = color;
+                this.headColor = headColor;
+                this.score = 0;
+                this.nextDx = dx; // Buffer para próxima direção X
+                this.nextDy = dy; // Buffer para próxima direção Y
+                this.canTurn = true; // Previne múltiplas curvas no mesmo frame
+                this.attackKey = attackKey; // Tecla para ativar o ataque
+                this.projectileColor = projectileColor; // *** Cor do projétil desta cobra ***
+                this.speedBoostActive = false;
+                this.speedBoostTimeout = null;
+                this.attackCooldown = 0; // Temporizador de cooldown para ataque
+                this.attackCooldownTime = 300; // Millissegundos entre tiros
+            }
+
+            // Muda a direção da cobra (com buffer)
+            changeDirection(newDx, newDy) {
+                // Só permite mudar se não for a direção oposta e se já pode virar
+                 if (this.canTurn && (this.dx !== -newDx || this.dy !== -newDy)) {
+                    this.nextDx = newDx;
+                    this.nextDy = newDy;
+                    this.canTurn = false; // Impede outra curva até o próximo movimento
+                }
+            }
+
+             // Tenta usar o ataque (lançar projétil) - Tiros infinitos com cooldown
+            useAttack() {
+                if (this.attackCooldown <= 0) { // Verifica cooldown
+                    const head = this.body[0];
+                    // Lança o projétil da posição à frente da cabeça na direção atual
+                    const projX = head.x + this.dx;
+                    const projY = head.y + this.dy;
+
+                    // Verifica se a posição de lançamento é válida (dentro do canvas)
+                    if (projX >= 0 && projX < tileCountX && projY >= 0 && projY < tileCountY) {
+                         // *** MODIFICADO: Passa a cor específica do projétil da cobra ***
+                         projectiles.push(new Projectile(projX, projY, this.dx, this.dy, this, this.projectileColor));
+                         this.attackCooldown = this.attackCooldownTime; // Define cooldown
+                         console.log("Projectile launched!");
+                         return true; // Ataque usado
+                    } else {
+                         console.log("Cannot launch projectile off-screen.");
+                         return false;
+                    }
+                }
+                return false; // Ataque em cooldown
+            }
+
+
+            // Ativa o boost de velocidade
+            activateSpeedBoost(duration = 3000) {
+                if (this.speedBoostTimeout) clearTimeout(this.speedBoostTimeout); // Cancela boost anterior
+                this.speedBoostActive = true;
+                gameSpeed = initialSpeed / 1.5; // Aumenta a velocidade global
+                updateGameInterval();
+                console.log("Speed boost active!");
+
+                this.speedBoostTimeout = setTimeout(() => {
+                    this.speedBoostActive = false;
+                    // Só reseta a velocidade se o *outro* jogador não tiver boost
+                    const otherPlayer = this === player1 ? player2 : player1;
+                    if (!otherPlayer.speedBoostActive) {
+                         gameSpeed = initialSpeed;
+                         updateGameInterval();
+                    }
+                    console.log("Speed boost ended.");
+                }, duration);
+            }
+
+            // Encurta a cobra
+            shorten(amount = 3) {
+                 // Garante que a cobra não desapareça (mínimo 1 segmento)
+                 const removeCount = Math.min(amount, this.body.length - 1);
+                 if (removeCount > 0) {
+                    this.body.splice(-removeCount); // Remove 'removeCount' elementos do final
+                    console.log(`Snake shortened by ${removeCount} segments.`);
+                 }
+            }
+
+            // Atualiza temporizador de cooldown
+            updateCooldown(deltaTime) {
+                if (this.attackCooldown > 0) {
+                    this.attackCooldown -= deltaTime;
+                }
+            }
+
+            // Move a cobra
+            move() {
+                // Atualiza a direção real antes de mover
+                this.dx = this.nextDx;
+                this.dy = this.nextDy;
+                this.canTurn = true; // Permite nova curva no próximo frame
+
+                const head = { x: this.body[0].x + this.dx, y: this.body[0].y + this.dy };
+
+                // Lógica de atravessar paredes (torus)
+                if (head.x < 0) head.x = tileCountX - 1;
+                if (head.x >= tileCountX) head.x = 0;
+                if (head.y < 0) head.y = tileCountY - 1;
+                if (head.y >= tileCountY) head.y = 0;
+
+                this.body.unshift(head); // Adiciona nova cabeça
+
+                // Verifica se comeu comida
+                if (food && head.x === food.x && head.y === food.y) {
+                    this.score++;
+                    spawnFood(); // Gera nova comida
+                    // Não remove a cauda, efetivamente crescendo
+                } else {
+                    this.body.pop(); // Remove a cauda se não comeu
+                }
+
+                 // Verifica se pegou power-up (apenas velocidade agora)
+                if (powerUp && head.x === powerUp.x && head.y === powerUp.y) {
+                    if (powerUp.type === 'speed') {
+                        this.activateSpeedBoost();
+                    }
+                    powerUp = null; // Remove o power-up
+                }
+            }
+
+            // Desenha a cobra
+            draw() {
+                 ctx.save(); // Salva estado do contexto
+
+                this.body.forEach((segment, index) => {
+                    ctx.fillStyle = index === 0 ? this.headColor : this.color; // Cor diferente para cabeça
+                    ctx.fillRect(segment.x * grid, segment.y * grid, grid - 1, grid - 1);
+                     // Adiciona "olhos" na cabeça
+                    if (index === 0) {
+                        ctx.fillStyle = '#000'; // Cor dos olhos
+                        const eyeSize = grid / 5;
+                        const eyeOffset = grid / 4;
+                        // Calcula posição dos olhos baseada na direção
+                        if (this.dx === 1) { // Direita
+                            ctx.fillRect(segment.x * grid + grid / 2, segment.y * grid + eyeOffset, eyeSize, eyeSize);
+                            ctx.fillRect(segment.x * grid + grid / 2, segment.y * grid + grid - eyeOffset - eyeSize, eyeSize, eyeSize);
+                        } else if (this.dx === -1) { // Esquerda
+                             ctx.fillRect(segment.x * grid + grid / 2 - eyeSize , segment.y * grid + eyeOffset, eyeSize, eyeSize);
+                            ctx.fillRect(segment.x * grid + grid / 2 - eyeSize, segment.y * grid + grid - eyeOffset - eyeSize, eyeSize, eyeSize);
+                        } else if (this.dy === 1) { // Baixo
+                            ctx.fillRect(segment.x * grid + eyeOffset, segment.y * grid + grid / 2, eyeSize, eyeSize);
+                            ctx.fillRect(segment.x * grid + grid - eyeOffset - eyeSize, segment.y * grid + grid / 2, eyeSize, eyeSize);
+                        } else if (this.dy === -1) { // Cima
+                            ctx.fillRect(segment.x * grid + eyeOffset, segment.y * grid + grid / 2 - eyeSize, eyeSize, eyeSize);
+                            ctx.fillRect(segment.x * grid + grid - eyeOffset - eyeSize, segment.y * grid + grid / 2 - eyeSize, eyeSize, eyeSize);
+                        }
+                    }
+                });
+                 ctx.restore(); // Restaura estado do contexto
+            }
+
+            // Verifica colisão com o próprio corpo
+            checkSelfCollision() {
+                const head = this.body[0];
+                for (let i = 1; i < this.body.length; i++) {
+                    if (head.x === this.body[i].x && head.y === this.body[i].y) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Verifica colisão da cabeça com o corpo de outra cobra
+            checkCollisionWithOther(otherSnake) {
+                const head = this.body[0];
+                for (let i = 0; i < otherSnake.body.length; i++) { // Começa de 0 para incluir cabeça vs cabeça
+                    if (head.x === otherSnake.body[i].x && head.y === otherSnake.body[i].y) {
+                        return true; // Colidiu
+                    }
+                }
+                return false;
+            }
+
+        }
+
+        // --- Funções do Jogo ---
+
+        // Gera uma posição aleatória no grid, evitando cobras e power-ups
+        function getRandomPosition() {
+            let newPos;
+            let collision;
+            const maxAttempts = tileCountX * tileCountY; // Evita loop infinito
+            let attempts = 0;
+            do {
+                collision = false;
+                newPos = {
+                    x: Math.floor(Math.random() * tileCountX),
+                    y: Math.floor(Math.random() * tileCountY)
+                };
+
+                // Verifica colisão com Jogador 1
+                if (player1) { // Verifica se player1 existe
+                    for (const segment of player1.body) {
+                        if (newPos.x === segment.x && newPos.y === segment.y) {
+                            collision = true;
+                            break;
+                        }
+                    }
+                }
+                 // Verifica colisão com Jogador 2
+                 if (!collision && player2) { // Verifica se player2 existe
+                    for (const segment of player2.body) {
+                        if (newPos.x === segment.x && newPos.y === segment.y) {
+                            collision = true;
+                            break;
+                        }
+                    }
+                 }
+                 // Verifica colisão com power-up existente
+                 if (!collision && powerUp && newPos.x === powerUp.x && newPos.y === powerUp.y) {
+                     collision = true;
+                 }
+                 // Verifica colisão com comida existente
+                 if (!collision && food && newPos.x === food.x && newPos.y === food.y) {
+                     collision = true;
+                 }
+                  // Verifica colisão com projéteis existentes
+                 if (!collision) {
+                    for (const proj of projectiles) {
+                         if (newPos.x === proj.x && newPos.y === proj.y) {
+                             collision = true;
+                             break;
+                         }
+                     }
+                 }
+                 attempts++;
+
+            } while (collision && attempts < maxAttempts);
+
+             // Se não encontrou posição livre após muitas tentativas, retorna null
+             if (attempts >= maxAttempts) {
+                 console.warn("Não foi possível encontrar uma posição livre para spawn.");
+                 return null;
+             }
+
+            return newPos;
+        }
+
+        // Gera comida em uma posição aleatória
+        function spawnFood() {
+            const pos = getRandomPosition();
+             if (pos) { // Só gera se encontrou posição
+                food = new Food(pos.x, pos.y);
+             } else {
+                 food = null; // Sem espaço para comida
+             }
+        }
+
+        // Gera um power-up de velocidade aleatoriamente (com chance)
+        function trySpawnPowerUp() {
+             // Só tenta gerar se não houver um power-up ativo e o jogo estiver ativo
+            if (gameActive && !powerUp && Math.random() < 0.08) { // 8% de chance aprox a cada 2 segundos
+                const pos = getRandomPosition();
+                 if (pos) { // Só gera se encontrou posição
+                    // Apenas gera power-ups de 'velocidade' agora
+                    powerUp = new PowerUp(pos.x, pos.y);
+                    console.log(`Power-up spawned: speed`);
+                 }
+            }
+        }
+
+        // Atualiza e remove projéteis
+        function updateProjectiles() {
+            const projectilesToRemove = [];
+            projectiles.forEach((proj, index) => {
+                proj.move();
+
+                // Verifica colisão com as cobras
+                const targetSnake = proj.owner === player1 ? player2 : player1;
+                if (proj.checkCollisionWithSnake(targetSnake)) {
+                    targetSnake.shorten(3); // Encurta a cobra atingida
+                    projectilesToRemove.push(index);
+                    console.log("Projectile hit!");
+                } else if (proj.isOffScreen()) {
+                    projectilesToRemove.push(index);
+                }
+            });
+
+             // Remove projéteis marcados (do maior índice para o menor para evitar problemas de índice)
+            for (let i = projectilesToRemove.length - 1; i >= 0; i--) {
+                projectiles.splice(projectilesToRemove[i], 1);
+            }
+        }
+
+        // Inicializa estado do jogo
+        function initGame() {
+            gameActive = true;
+            gameSpeed = initialSpeed; // Reseta velocidade
+            projectiles = []; // Limpa projéteis
+            powerUp = null; // Limpa power-up
+            food = null; // Limpa comida inicial
+
+             // Limpa intervalos anteriores
+             clearInterval(gameInterval);
+             clearInterval(powerUpSpawnInterval);
+
+            // Posições e direções iniciais opostas
+            // *** MODIFICADO: Passa a cor do projétil para o construtor da Cobra ***
+            player1 = new Snake(5, Math.floor(tileCountY / 2), 1, 0, P1_COLOR, P1_HEAD_COLOR, 'f', P1_PROJECTILE_COLOR);
+            player2 = new Snake(tileCountX - 6, Math.floor(tileCountY / 2), -1, 0, P2_COLOR, P2_HEAD_COLOR, 'enter', P2_PROJECTILE_COLOR);
+
+            spawnFood(); // Gera primeira comida
+            updateScores();
+            hideMessage();
+            startGameLoop();
+
+             // Inicia intervalo para tentar gerar power-ups
+             powerUpSpawnInterval = setInterval(trySpawnPowerUp, 2000); // Tenta a cada 2 segundos
+        }
+
+        // Atualiza placar na tela
+        function updateScores() {
+            // Garante que jogadores existam antes de acessar pontuação
+            if (player1) score1Element.textContent = player1.score;
+            if (player2) score2Element.textContent = player2.score;
+        }
+
+        // Desenha todos os elementos do jogo
+        function drawGame() {
+            // Limpa canvas
+            ctx.fillStyle = '#000'; // Fundo preto
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+            // Desenha cobras (verifica se existem)
+            if (player1) player1.draw();
+            if (player2) player2.draw();
+
+            // Desenha comida
+            if (food) {
+                food.draw();
+            }
+
+            // Desenha power-up (se existir)
+            if (powerUp) {
+                powerUp.draw();
+            }
+
+             // Desenha projéteis
+            projectiles.forEach(proj => proj.draw());
+
+             // Reseta filtro global para não afetar elementos fora das cobras/powerups
+             ctx.filter = 'none';
+        }
+
+        // Atualiza estado do jogo (movimento, colisões)
+        function updateGame() {
+            if (!gameActive || !player1 || !player2) return; // Garante que jogo está ativo e jogadores existem
+
+             // Atualiza cooldowns das cobras baseado no gameSpeed
+             const deltaTime = gameSpeed; // Tempo decorrido desde último frame é gameSpeed
+             player1.updateCooldown(deltaTime);
+             player2.updateCooldown(deltaTime);
+
+            player1.move();
+            player2.move();
+            updateProjectiles(); // Atualiza posição e colisões dos projéteis
+
+            updateScores();
+
+            // --- Verificações de Colisão das Cobras ---
+            let gameOverReason = null;
+
+            // Colisão Jogador 1 consigo mesmo
+            if (player1.checkSelfCollision()) {
+                gameOverReason = "Jogador 2 Venceu! (Jogador 1 colidiu consigo mesmo)";
+            }
+            // Colisão Jogador 2 consigo mesmo
+            else if (player2.checkSelfCollision()) {
+                 gameOverReason = "Jogador 1 Venceu! (Jogador 2 colidiu consigo mesmo)";
+            }
+             // Colisão Jogador 1 com Jogador 2
+            else if (player1.checkCollisionWithOther(player2)) {
+                 // Verifica se foi colisão de cabeças
+                 if (player1.body[0].x === player2.body[0].x && player1.body[0].y === player2.body[0].y) {
+                      gameOverReason = "Empate! (Colisão de cabeças)";
+                 } else {
+                      gameOverReason = "Jogador 2 Venceu! (Jogador 1 colidiu com Jogador 2)";
+                 }
+            }
+             // Colisão Jogador 2 com Jogador 1
+            else if (player2.checkCollisionWithOther(player1)) {
+                 // Colisão de cabeças já tratada acima
+                 gameOverReason = "Jogador 1 Venceu! (Jogador 2 colidiu com Jogador 1)";
+            }
+
+
+            if (gameOverReason) {
+                endGame(gameOverReason);
+            }
+        }
+
+        // Loop principal do jogo
+        function gameLoop() {
+            if (!gameActive) return;
+            updateGame();
+            drawGame();
+        }
+
+        // Para loop do jogo e mostra mensagem final
+        function endGame(reason) {
+            gameActive = false;
+            clearInterval(gameInterval); // Para loop principal
+            clearInterval(powerUpSpawnInterval); // Para spawn de power-ups
+             // Limpa timeouts de boost
+            if (player1 && player1.speedBoostTimeout) clearTimeout(player1.speedBoostTimeout);
+            if (player2 && player2.speedBoostTimeout) clearTimeout(player2.speedBoostTimeout);
+            showMessage(reason);
+        }
+
+        // Mostra caixa de mensagem
+        function showMessage(text) {
+            messageText.textContent = text;
+            messageBox.style.display = 'block';
+        }
+
+        // Esconde caixa de mensagem
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+         // Inicia/Reinicia intervalo do jogo com velocidade atual
+        function startGameLoop() {
+            clearInterval(gameInterval); // Limpa intervalo anterior se houver
+            gameInterval = setInterval(gameLoop, gameSpeed);
+        }
+
+        // Atualiza intervalo do jogo (usado para boost de velocidade)
+        function updateGameInterval() {
+             if (gameActive) {
+                 startGameLoop(); // Reinicia com nova velocidade
+             }
+        }
+
+
+        // --- Controles ---
+        document.addEventListener('keydown', (e) => {
+             // Permite reiniciar mesmo com jogo inativo via tecla Enter
+             if (!gameActive && e.key.toLowerCase() === 'enter' && messageBox.style.display === 'block') {
+                 initGame();
+                 return;
+             }
+             // Ignora input se jogo não ativo ou jogadores não inicializados
+             if (!gameActive || !player1 || !player2) return;
+
+
+            const key = e.key.toLowerCase(); // Converte para minúscula
+
+            // Controles Jogador 1 (WASD + F)
+            if (key === 'w' && player1.dy === 0) player1.changeDirection(0, -1); // Cima
+            else if (key === 's' && player1.dy === 0) player1.changeDirection(0, 1);  // Baixo
+            else if (key === 'a' && player1.dx === 0) player1.changeDirection(-1, 0); // Esquerda
+            else if (key === 'd' && player1.dx === 0) player1.changeDirection(1, 0);  // Direita
+            else if (key === player1.attackKey) player1.useAttack(); // Ataque P1
+
+            // Controles Jogador 2 (Setas + Enter)
+            else if (key === 'arrowup' && player2.dy === 0) player2.changeDirection(0, -1);
+            else if (key === 'arrowdown' && player2.dy === 0) player2.changeDirection(0, 1);
+            else if (key === 'arrowleft' && player2.dx === 0) player2.changeDirection(-1, 0);
+            else if (key === 'arrowright' && player2.dx === 0) player2.changeDirection(1, 0);
+             else if (key === player2.attackKey) player2.useAttack(); // Ataque P2
+        });
+
+        // Botão Reiniciar
+        restartButton.addEventListener('click', initGame);
+
+        // --- Iniciar Jogo ---
+        showMessage("Tiros Coloridos! J1(Rosa): WASD+F | J2(Laranja): Setas+Enter.");
+        // Ajusta texto e função inicial do botão:
+        restartButton.textContent = "Iniciar Jogo";
+        restartButton.onclick = () => {
+            restartButton.textContent = "Reiniciar"; // Muda texto após primeiro clique
+            initGame();
+            // Remove handler temporário e define o padrão
+            restartButton.onclick = initGame;
+        };
+
+    </script>
+</body>
+</html>
